@@ -35,6 +35,7 @@ This is the **master model**. Smaller app-type models (e.g. CLI tool, static web
   - `manual` — needs a person's judgement, or confirms that a document or practice exists.
 - **Automation is a requirement only where it's the practice itself** — e.g. "secret scanning runs on every push" at Secrets L4. There's no blanket rule that high levels must be automated; the goal is that wherever a check *can* be continually validated, it is.
 - **Checks name the signal, not the tool.** Example tools are given with "or equivalent"; any tool that produces the same signal counts.
+- **Every check is achievable by a solo maintainer.** Where a practice normally needs a second person (code review, an on-call rotation), the check also names a solo equivalent that serves the same purpose. Meeting the solo equivalent satisfies the check in full; it isn't a lesser pass, and an app shouldn't be marked N/A just because it has one maintainer.
 - **Platform defaults count only when consciously verified.** A capability a hosting platform provides out of the box (autoscaling, encryption at rest, TLS) meets a check only if someone has confirmed it's configured as needed — not if it's merely assumed.
 
 ### Assessment
@@ -87,6 +88,92 @@ Continuous deployment: every change that passes CI can reach production automati
 - `OPS.CICD.L5.c2` · `continuous` — an automated rollback trigger (health-check or error-rate based) is configured.
 
 *→ Maintaining Level 5:* keep the pipeline fast and the tests trustworthy enough that "every commit can ship" stays true as the app grows.
+
+### Change control (`OPS.CHANGE`)
+
+Covers the gate every change passes through before it reaches the default branch and production: protection, review, and traceability.
+
+**Level 1**
+Anyone with access can push straight to the default branch, force-push over history, or delete it. Nothing is reviewed before it lands, and there's no reliable way to tell later who changed what and why.
+*→ To reach Level 2:* Protect the default branch against force-pushes and deletion, and start routing changes through pull requests, even if they're self-merged.
+
+**Level 2**
+The default branch is protected from destructive operations, and changes usually arrive through pull requests, which leaves a record. Review is still optional — direct pushes and self-merges without a second look are common, and nothing stops a failing change from merging.
+*Checks:*
+- `OPS.CHANGE.L2.c1` · `continuous` — the default branch is protected against force-pushes and deletion.
+- `OPS.CHANGE.L2.c2` · `manual` — recent changes to the default branch arrived through pull requests (or equivalent), not direct pushes.
+
+*→ To reach Level 3:* Make pull requests mandatory, with a required review and passing CI before merge. On a team, the review comes from another person. A solo maintainer makes an automated review a required, blocking check instead.
+
+**Level 3**
+Every change to the default branch goes through a pull request that needs a review and passing required checks — from another person on a team, or from a required automated reviewer on a solo project. Admins can still bypass the rules, an approval survives later pushes to the same PR, and sensitive areas get no more scrutiny than anything else.
+*Checks:*
+- `OPS.CHANGE.L3.c1` · `continuous` — branch protection requires a pull request with a review before merge: an approving review from someone other than the author or, for a solo maintainer, an automated review (e.g. an AI code reviewer or equivalent) whose result is a required, blocking check. A reviewer that only leaves comments doesn't count.
+- `OPS.CHANGE.L3.c2` · `continuous` — branch protection requires CI status checks to pass before merge.
+
+*→ To reach Level 4:* Close the gaps around the gate: apply the rules to admins, dismiss approvals when new commits are pushed, and add extra required scrutiny for sensitive paths (infrastructure, auth, CI config).
+
+**Level 4**
+The review gate has no quiet way around it. Rules apply to everyone, including admins, or any bypass is deliberate and logged. Approvals are tied to the code actually being merged, and changes to sensitive paths get extra required scrutiny.
+*Checks:*
+- `OPS.CHANGE.L4.c1` · `continuous` — branch protection applies to admins, or bypasses need an explicit, logged action.
+- `OPS.CHANGE.L4.c2` · `continuous` — approvals (human or automated) are dismissed or re-run when new commits are pushed to the pull request.
+- `OPS.CHANGE.L4.c3` · `continuous` — changes to sensitive paths such as infrastructure, auth and CI configuration need an extra required check: owner review through a CODEOWNERS file (or equivalent) on a team or, for a solo maintainer, a check scoped to those paths (e.g. an IaC policy scan or a focused security review) that must pass.
+
+*→ To reach Level 5:* Manage the protection settings themselves as code so they can't drift silently, and audit regularly that nothing unreviewed reached the default branch.
+
+**Level 5**
+Change control is verified, not assumed. The protection rules are defined in version control and reviewed like any other change, and regular audits confirm that every change reaching the default branch went through the gate.
+*Checks:*
+- `OPS.CHANGE.L5.c1` · `continuous` — branch protection and repository settings are managed as code (e.g. repository rulesets in version control, a Terraform GitHub provider or equivalent), and drift from that definition is detected.
+- `OPS.CHANGE.L5.c2` · `periodic ≤6mo` — an audit of merges and bypasses on the default branch confirms that no unreviewed changes landed, and the result is recorded.
+
+*→ Maintaining Level 5:* bring new repositories and new sensitive paths under the same rules as they appear. Protection added to one repository doesn't carry over to the next.
+
+### Environments & IaC (`OPS.ENV`)
+
+*Applies when:* the app is deployed to infrastructure its maintainers configure, not only distributed as a package or binary.
+
+Covers whether the app's environments can be recreated, kept consistent with each other, and changed safely, including its database schema.
+
+**Level 1**
+Production was set up by hand, and only the person who did it knows how. Local setup is tribal knowledge, there's no environment besides production, and schema changes are applied by running SQL manually.
+*→ To reach Level 2:* Write down how to set up a local environment from a clean machine, and how production is configured: its services, settings and environment variables.
+
+**Level 2**
+Local setup and production configuration are documented, so someone new could follow the steps. Everything is still created and changed by hand. There's no separate pre-production environment, and the docs drift as people make changes that aren't written down.
+*Checks:*
+- `OPS.ENV.L2.c1` · `manual` — documented steps set up a working local environment from a clean machine.
+- `OPS.ENV.L2.c2` · `manual` — production's configuration (services, settings, environment variables, but not secret values) is documented.
+
+*→ To reach Level 3:* Stand up a staging environment separate from production, make local setup a single command, and put schema changes under a migration tool.
+
+**Level 3**
+A staging environment exists with its own data and credentials. Local setup is one command, and schema changes are versioned migrations. Infrastructure is still created by hand in consoles, so staging and production drift apart, and migrations are run manually during deploys.
+*Checks:*
+- `OPS.ENV.L3.c1` · `manual` — a non-production environment exists with data and credentials separate from production.
+- `OPS.ENV.L3.c2` · `manual` — a local environment starts with one command (e.g. Docker Compose, a dev container, Nix or equivalent).
+- `OPS.ENV.L3.c3` · `manual` — schema changes are versioned migration files applied by a migration tool (e.g. Flyway, Alembic, Prisma Migrate or equivalent), where the app has a database.
+
+*→ To reach Level 4:* Define the infrastructure as code and apply it through a pipeline, build staging and production from the same definitions, and run migrations automatically as part of deploys.
+
+**Level 4**
+Infrastructure is defined in version control and changed through a pipeline instead of a console. Staging and production are built from the same definitions, differing only in parameters, and migrations run automatically on deploy. Whether the definitions could rebuild an environment from scratch is assumed, not proven, and manual changes can still drift in unnoticed.
+*Checks:*
+- `OPS.ENV.L4.c1` · `continuous` — production infrastructure is defined as code (e.g. Terraform, Pulumi, CDK or equivalent) in version control, and changes are applied by a pipeline, not by hand.
+- `OPS.ENV.L4.c2` · `manual` — staging and production are created from the same IaC definitions, differing only in parameters such as size and secrets.
+- `OPS.ENV.L4.c3` · `continuous` — migrations are applied automatically by the deploy pipeline, where the app has a database.
+
+*→ To reach Level 5:* Detect drift between the code and what's actually running, prove you can rebuild an environment from scratch, and write migrations so that deploys can be rolled back without rolling back the schema.
+
+**Level 5**
+Environments are disposable. Any of them can be rebuilt from code, and that's been proven. Drift is caught automatically, and migrations follow an expand/contract pattern, so the application can be rolled back without undoing the schema.
+*Checks:*
+- `OPS.ENV.L5.c1` · `continuous` — drift detection (e.g. a scheduled `terraform plan` or equivalent) runs automatically and notifies someone when live infrastructure differs from its definition.
+- `OPS.ENV.L5.c2` · `periodic ≤12mo` — an environment has been rebuilt from scratch using only its IaC definitions, and the result is recorded.
+- `OPS.ENV.L5.c3` · `manual` — migrations follow an expand/contract (backward-compatible) pattern so that the previous application version still runs against the new schema.
+
+*→ Maintaining Level 5:* bring every new service and resource into IaC from the start. One "temporary" resource created by hand is how drift starts.
 
 ### Testing (`OPS.TEST`)
 
@@ -166,7 +253,7 @@ Structured logs, metrics, and distributed tracing are centralized and correlated
 
 ### Incident response (`OPS.INC`)
 
-Covers how people detect, respond to, and learn from **operational** failures. How the system itself behaves under failure (automated recovery, fault injection) belongs to [Resilience](#resilience--fault-tolerance-archres).
+Covers how people detect, respond to, and learn from **operational** failures. How the system itself behaves under failure (automated recovery, fault injection) belongs to [Resilience](#resilience--fault-tolerance-archres). Recovering lost data, including restore drills, belongs to [Backup & DR](#backup--dr-opsdr). Security incidents belong to the Security dimension.
 
 **Level 1**
 No defined process for handling failures. When something breaks, whoever notices improvises a fix, with no record of what happened or why, and no one is clearly responsible.
@@ -186,23 +273,67 @@ Runbooks exist for known failure modes and are actually used during incidents. A
 - `OPS.INC.L3.c1` · `manual` — runbooks exist for at least the known failure modes.
 - `OPS.INC.L3.c2` · `manual` — a post-incident writeup exists for the most recent significant incident.
 
-*→ To reach Level 4:* Track post-incident action items to completion, and define an on-call rotation with an escalation path so response doesn't depend on whoever happens to be around.
+*→ To reach Level 4:* Track post-incident action items to completion, and make sure response doesn't depend on whoever happens to be around: an on-call rotation with an escalation path on a team, or a documented plan for when the sole maintainer is unavailable.
 
 **Level 4**
-Post-incident reviews reliably produce tracked follow-up actions that get completed. On-call is a defined rotation with an escalation path, not a single person or best effort.
+Post-incident reviews reliably produce tracked follow-up actions that get completed. Who responds is defined, not best effort: a rotation with an escalation path on a team or, on a solo project, alerts that reliably reach the maintainer and a stated plan for when they can't respond.
 *Checks:*
 - `OPS.INC.L4.c1` · `manual` — post-incident action items are tracked in an issue tracker through to completion.
-- `OPS.INC.L4.c2` · `manual` — an on-call rotation and escalation path are defined.
+- `OPS.INC.L4.c2` · `manual` — an on-call rotation and escalation path are defined or, for a solo maintainer, a documented plan for when they're unavailable: a published response expectation, plus either a backup person with break-glass access or a safe default (e.g. a maintenance page or automatic rollback) that the app falls back to.
 
 *→ To reach Level 5:* Track time to restore and drive it down, and rehearse incident response through scheduled game days rather than only learning from real incidents.
 
 **Level 5**
-Incident response is measured and practiced: time to restore is tracked and trending down, and the team rehearses its response through game days so a real incident isn't the first time a runbook gets used.
+Incident response is measured and practiced: time to restore is tracked and trending down, and the response is rehearsed through game days (a solo tabletop run counts) so a real incident isn't the first time a runbook gets used.
 *Checks:*
 - `OPS.INC.L5.c1` · `manual` — time to restore is tracked per incident and trending down.
 - `OPS.INC.L5.c2` · `periodic ≤6mo` — a game day rehearsing human incident response has been run and its outcome recorded.
 
 *→ Maintaining Level 5:* keep runbooks and game-day scenarios current as the system changes — a rehearsal against last year's architecture builds false confidence.
+
+### Backup & DR (`OPS.DR`)
+
+*Applies when:* the app stores persistent data it can't regenerate.
+
+Covers whether data survives loss, whether it can be restored, and how quickly the app recovers from losing a whole environment. How the running system rides out a failing dependency belongs to [Resilience](#resilience--fault-tolerance-archres).
+
+**Level 1**
+No backups, or backups assumed to exist because the platform "probably does that." If the database is deleted or corrupted, the data is gone.
+*→ To reach Level 2:* Configure automated backups for every persistent data store and confirm they're actually running. A platform's default backups count only once you've checked they're on and cover what you need.
+
+**Level 2**
+Automated backups exist for all persistent data. Nobody has ever restored from one, so whether they work is unknown. They often sit in the same account or region as the primary data, and a failed backup job goes unnoticed.
+*Checks:*
+- `OPS.DR.L2.c1` · `continuous` — automated backups are configured for every persistent data store (platform backups count once verified).
+
+*→ To reach Level 3:* Restore a backup into a non-production environment and check the data, keep backups somewhere that one incident can't wipe out along with the primary, and alert when a backup job fails.
+
+**Level 3**
+Backups have been proven restorable, are stored away from the primary, and a failed backup gets noticed. Nobody has decided how much data loss or downtime is acceptable, though, so it's unknown whether the backup frequency or the restore time is good enough.
+*Checks:*
+- `OPS.DR.L3.c1` · `periodic ≤6mo` — a backup has been restored into a non-production environment and the data checked, and the result is recorded.
+- `OPS.DR.L3.c2` · `manual` — backups are stored in a separate account, project or region from the primary, so one compromise or outage can't destroy both.
+- `OPS.DR.L3.c3` · `continuous` — a failed or missed backup job alerts someone.
+
+*→ To reach Level 4:* Define a recovery point objective (RPO, the maximum acceptable data loss) and a recovery time objective (RTO, the maximum acceptable downtime), set backup frequency and retention to meet the RPO, and run a timed restore against the RTO.
+
+**Level 4**
+RPO and RTO are defined and met. Backup frequency, including point-in-time recovery where needed, satisfies the RPO, and a timed drill has shown that a restore fits within the RTO. Recovery is still a manual procedure run by people, and losing a whole region or environment means rebuilding by hand.
+*Checks:*
+- `OPS.DR.L4.c1` · `manual` — RPO and RTO are documented for the app's data.
+- `OPS.DR.L4.c2` · `manual` — backup frequency and retention meet the RPO, with point-in-time recovery where the RPO needs it.
+- `OPS.DR.L4.c3` · `manual` — a disaster recovery runbook documents the restore procedure step by step.
+- `OPS.DR.L4.c4` · `periodic ≤6mo` — a timed restore drill finished within the RTO, and its duration is recorded.
+
+*→ To reach Level 5:* Keep a replica or standby in a separate failure domain with automated failover, and drill a full failover against the RPO and RTO.
+
+**Level 5**
+Losing a zone, a region or the primary data store is survivable without improvised work. A standby in a separate failure domain takes over automatically, and full failover drills confirm that the RPO and RTO hold in practice.
+*Checks:*
+- `OPS.DR.L5.c1` · `continuous` — a replica or standby in a separate failure domain (zone or region, as the RTO requires) is configured with automated failover.
+- `OPS.DR.L5.c2` · `periodic ≤12mo` — a full failover drill was measured against the RPO and RTO, and the result is recorded.
+
+*→ Maintaining Level 5:* add every new data store to backups and failover from the day it's created. The store nobody remembered is the one that gets lost.
 
 ---
 
@@ -361,7 +492,7 @@ Tech debt is actively paid down, not just tracked. Type safety and/or test cover
 **Level 5**
 Maintainability is actively protected as a first-class concern — its trend is measured, refactoring is routine and low-risk, and debt doesn't silently accumulate because paydown is a standing commitment, not a periodic push.
 *Checks:*
-- `ARCH.DEBT.L5.c1` · `continuous` — a maintainability trend from static analysis is tracked over time and visible to the team.
+- `ARCH.DEBT.L5.c1` · `continuous` — a maintainability trend from static analysis is tracked over time and visible to everyone who works on the code.
 - `ARCH.DEBT.L5.c2` · `manual` — debt paydown is a recurring, budgeted activity (e.g. a fixed share of each cycle).
 
 *→ Maintaining Level 5:* keep watching for quiet regression — maintainability erodes gradually, and this sub-category is the easiest one to silently slip backward on.
