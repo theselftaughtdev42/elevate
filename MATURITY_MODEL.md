@@ -134,7 +134,7 @@ Change control is verified, not assumed. The protection rules are defined in ver
 
 *Applies when:* the app is deployed to infrastructure its maintainers configure, not only distributed as a package or binary.
 
-Covers whether the app's environments can be recreated, kept consistent with each other, and changed safely, including its database schema.
+Covers whether the app's environments can be recreated, kept consistent with each other, and changed safely, including how schema migrations are applied. How schema changes are designed belongs to [Data architecture & schema evolution](#data-architecture--schema-evolution-archdata).
 
 **Level 1**
 Production was set up by hand, and only the person who did it knows how. Local setup is tribal knowledge, there's no environment besides production, and schema changes are applied by running SQL manually.
@@ -164,14 +164,13 @@ Infrastructure is defined in version control and changed through a pipeline inst
 - `OPS.ENV.L4.c2` · `manual` — staging and production are created from the same IaC definitions, differing only in parameters such as size and secrets.
 - `OPS.ENV.L4.c3` · `continuous` — migrations are applied automatically by the deploy pipeline, where the app has a database.
 
-*→ To reach Level 5:* Detect drift between the code and what's actually running, prove you can rebuild an environment from scratch, and write migrations so that deploys can be rolled back without rolling back the schema.
+*→ To reach Level 5:* Detect drift between the code and what's actually running, and prove you can rebuild an environment from scratch.
 
 **Level 5**
-Environments are disposable. Any of them can be rebuilt from code, and that's been proven. Drift is caught automatically, and migrations follow an expand/contract pattern, so the application can be rolled back without undoing the schema.
+Environments are disposable. Any of them can be rebuilt from code, and that's been proven. Drift is caught automatically, so what's running is what's in version control.
 *Checks:*
 - `OPS.ENV.L5.c1` · `continuous` — drift detection (e.g. a scheduled `terraform plan` or equivalent) runs automatically and notifies someone when live infrastructure differs from its definition.
 - `OPS.ENV.L5.c2` · `periodic ≤12mo` — an environment has been rebuilt from scratch using only its IaC definitions, and the result is recorded.
-- `OPS.ENV.L5.c3` · `manual` — migrations follow an expand/contract (backward-compatible) pattern so that the previous application version still runs against the new schema.
 
 *→ Maintaining Level 5:* bring every new service and resource into IaC from the start. One "temporary" resource created by hand is how drift starts.
 
@@ -365,14 +364,97 @@ Boundaries are enforced automatically. Where it genuinely pays off, components a
 - `ARCH.COUP.L4.c1` · `continuous` — the dependency-boundary check runs in CI and is enforced.
 - `ARCH.COUP.L4.c2` · `manual` — each independently deployed component has a documented reason (scaling, release cadence, ownership), or there's a documented decision that none warrants splitting.
 
-*→ To reach Level 5:* Keep verifying that boundaries reflect real seams (ownership, scaling, failure domains) as the system grows, and make contracts between components explicit and versioned.
+*→ To reach Level 5:* Check boundaries against how the code actually changes: analyse which files change together, and where changes routinely cross module boundaries, move the boundary.
 
 **Level 5**
-Module and service boundaries map cleanly to real seams, contracts between them are explicit and versioned, and the system can evolve — splitting or merging components — without widespread breakage because coupling is genuinely low.
+Module and service boundaries map cleanly to real seams, and that's verified against how the code actually changes rather than assumed from a diagram. Most changes stay inside one module, and the system can evolve — splitting or merging components — without widespread breakage because coupling is genuinely low. Contracts between independently deployed components belong to [API design & contracts](#api-design--contracts-archapi).
 *Checks:*
-- `ARCH.COUP.L5.c1` · `continuous` — contracts between modules/services are versioned (e.g. versioned API schemas) and checked for breaking changes in CI.
+- `ARCH.COUP.L5.c1` · `periodic ≤12mo` — a change-coupling analysis of version-control history (e.g. code-maat, CodeScene or equivalent) has been run, and module pairs that routinely change together have been merged, re-split, or have a recorded reason to stay as they are.
 
 *→ Maintaining Level 5:* revisit boundaries as the app grows — yesterday's correct seam can become tomorrow's artificial split or tomorrow's tangled mess.
+
+### API design & contracts (`ARCH.API`)
+
+*Applies when:* the app exposes an interface that code outside it depends on — an HTTP or RPC API, published events or messages, a library's public API, or CLI flags and output that scripts rely on.
+
+Covers how that interface is defined, versioned and changed without breaking the code that depends on it. Boundaries between modules inside one deployable belong to [Coupling / modularity](#coupling--modularity-archcoup).
+
+**Level 1**
+The interface is whatever the implementation happens to expose. It isn't documented, and consumers find out about changes when their code breaks.
+*→ To reach Level 2:* Document the public interface: its operations, inputs, outputs and errors.
+
+**Level 2**
+The interface is documented, but by hand, so the docs drift from the code. Conventions vary from one endpoint or function to the next, and nobody has written down what counts as a breaking change.
+*Checks:*
+- `ARCH.API.L2.c1` · `manual` — the public interface (operations, inputs, outputs, errors) is documented.
+
+*→ To reach Level 3:* Capture the interface in a machine-readable contract kept in version control, settle on consistent conventions, and write a versioning policy that says what counts as breaking.
+
+**Level 3**
+A machine-readable contract describes the interface and lives in version control. Conventions are consistent, and a versioning policy says how breaking changes are signalled. Whether a change is breaking is still caught by people noticing, and nothing checks that the implementation actually matches the contract.
+*Checks:*
+- `ARCH.API.L3.c1` · `manual` — a machine-readable contract (e.g. OpenAPI, a GraphQL schema, Protobuf, JSON Schema, a library's published type declarations or equivalent) is in version control and is the source of truth, or is generated from the code.
+- `ARCH.API.L3.c2` · `manual` — conventions for naming, errors and pagination (or their equivalents for the interface type) are documented and followed.
+- `ARCH.API.L3.c3` · `manual` — a versioning policy (e.g. semantic versioning, URL or header versioning) defines what counts as a breaking change and how one is signalled.
+
+*→ To reach Level 4:* Detect breaking changes to the contract automatically in CI, and test that the implementation conforms to it.
+
+**Level 4**
+Breaking changes can't slip through unnoticed: CI compares the contract with the previous version and blocks a breaking change unless it comes with the matching version bump. Tests verify the implementation against the contract. Retiring old parts of the interface is still ad hoc, with no notice to consumers and no idea who still uses them.
+*Checks:*
+- `ARCH.API.L4.c1` · `continuous` — a breaking-change check (e.g. oasdiff, buf breaking, GraphQL Inspector, API Extractor or equivalent) runs in CI and blocks breaking changes that lack the matching version bump.
+- `ARCH.API.L4.c2` · `continuous` — tests verify that the implementation conforms to the contract (e.g. response schema validation or contract tests).
+
+*→ To reach Level 5:* Publish a deprecation policy with notice periods and migration notes, and measure how much the deprecated parts are still used so they can be removed on evidence.
+
+**Level 5**
+The interface evolves without surprising anyone. Deprecations are announced with a timeline and migration notes, usage of deprecated parts is measured, and removal happens when the evidence says it's safe, not on a guess.
+*Checks:*
+- `ARCH.API.L5.c1` · `manual` — a deprecation policy states the notice period, and every deprecated part of the interface carries a sunset date and migration notes in the changelog or docs.
+- `ARCH.API.L5.c2` · `continuous` — usage of deprecated parts is measured (e.g. per-endpoint or per-version request metrics, counted deprecation warnings, or download stats per major version for a library).
+
+*→ Maintaining Level 5:* hold new interfaces — a new endpoint, event or public function — to the same contract and versioning rules from their first release. Undocumented additions become de facto contracts quickly.
+
+### Data architecture & schema evolution (`ARCH.DATA`)
+
+*Applies when:* the app stores persistent data it can't regenerate.
+
+Covers how the data model is structured and owned, and how it changes without breaking running code. How migrations are applied during deploys belongs to [Environments & IaC](#environments--iac-opsenv); backups belong to [Backup & DR](#backup--dr-opsdr); sensitive data and retention belong to [Data protection](#data-protection-secdata).
+
+**Level 1**
+The schema grew without a plan. Nobody can say which part of the code is responsible for which data, several parts write the same tables directly, and a schema change routinely breaks code that's already running.
+*→ To reach Level 2:* Document the data model: the main entities, how they relate, and which part of the code owns each.
+
+**Level 2**
+The data model is documented, so you can see what exists and roughly who owns it. Ownership isn't enforced, though — any code can still write any table — and data integrity relies on application code remembering to check.
+*Checks:*
+- `ARCH.DATA.L2.c1` · `manual` — the data model (main entities, their relationships, and the owning module for each) is documented or generated from the schema.
+
+*→ To reach Level 3:* Make each table or collection writable only by the module that owns it, and enforce integrity rules in the database itself.
+
+**Level 3**
+Each piece of data has one owner, other code goes through that owner's interface, and the database enforces integrity with constraints. Schema changes are still made in place, so a deploy that renames or drops a column breaks the version of the code that's still running.
+*Checks:*
+- `ARCH.DATA.L3.c1` · `manual` — each table or collection is written by one owning module; other code reads or writes it only through that module's interface.
+- `ARCH.DATA.L3.c2` · `manual` — integrity rules (e.g. foreign keys, uniqueness, not-null) are enforced by database constraints where the store supports them.
+
+*→ To reach Level 4:* Make every schema change backward-compatible using an expand/contract pattern, and lint migrations in CI for destructive or locking operations.
+
+**Level 4**
+Schema changes are backward-compatible: new structures are added first, code moves over, and old structures are removed in a later step, so the previous code version always runs against the new schema and deploys can be rolled back. A linter catches dangerous migrations before they merge. How long a migration takes on real data volumes is still a surprise at deploy time, and unused schema piles up.
+*Checks:*
+- `ARCH.DATA.L4.c1` · `manual` — schema changes follow an expand/contract pattern, so the previous application version still runs against the new schema.
+- `ARCH.DATA.L4.c2` · `continuous` — a migration linter (e.g. Squawk, strong_migrations, Atlas lint or equivalent) runs in CI and flags destructive or table-locking changes.
+
+*→ To reach Level 5:* Test migrations against production-sized data in CI, and regularly find and remove unused tables and columns.
+
+**Level 5**
+Schema evolution is routine and safe. Migrations are tested at production scale before they ship, so their duration and locking behaviour are known in advance, and the schema stays lean because unused structures are found and removed.
+*Checks:*
+- `ARCH.DATA.L5.c1` · `continuous` — CI runs each migration against a production-sized dataset (e.g. an anonymised snapshot, or generated data at production volume) and reports its duration and locking.
+- `ARCH.DATA.L5.c2` · `periodic ≤12mo` — a review has identified unused tables, columns and indexes, and removed them or recorded why they stay.
+
+*→ Maintaining Level 5:* bring every new data store under the same ownership and migration rules from the start. A side database added "just for this feature" is where ownership erodes first.
 
 ### Scalability (`ARCH.SCALE`)
 
@@ -412,6 +494,45 @@ Scalability is verified, not assumed — the app has been load-tested to know it
 - `ARCH.SCALE.L5.c2` · `manual` — every layer (app, cache, data store, queue) has a verified scaling path.
 
 *→ Maintaining Level 5:* re-test after significant feature or traffic-pattern changes — past load tests go stale as usage evolves.
+
+### Performance (`ARCH.PERF`)
+
+Covers how fast the app is for the person or program using it: response times, page loads, startup time and resource use. How much load it can handle by adding capacity belongs to [Scalability](#scalability-archscale).
+
+**Level 1**
+Nobody knows how fast the app is. Performance problems are discovered by users, and fixes are guesses because there's no measurement to compare against.
+*→ To reach Level 2:* Measure the app's critical operations once — e.g. page load, API response time or CLI command duration — and record the numbers as a baseline.
+
+**Level 2**
+A baseline exists, so it's known roughly how fast the critical operations are. There's no target, though, so nobody can say whether that's good enough, and nothing notices when it gets slower.
+*Checks:*
+- `ARCH.PERF.L2.c1` · `periodic ≤12mo` — a baseline measurement of the critical operations is recorded.
+
+*→ To reach Level 3:* Set performance budgets for the critical operations, and profile them to find where the time actually goes.
+
+**Level 3**
+Performance budgets say what "fast enough" means for each critical operation, and profiling has shown where time is spent. Measurement is still occasional, so a regression can go unnoticed until the next manual check.
+*Checks:*
+- `ARCH.PERF.L3.c1` · `manual` — performance budgets are documented for the critical operations (e.g. p95 latency, Largest Contentful Paint, page weight, startup time).
+- `ARCH.PERF.L3.c2` · `periodic ≤6mo` — the critical paths have been profiled, and the findings are recorded or tracked as issues.
+
+*→ To reach Level 4:* Measure performance against the budgets automatically — in production for services and websites, or with benchmarks on a schedule for apps without a production runtime — and track every breach.
+
+**Level 4**
+Performance against the budgets is measured continuously, so breaches are seen when they happen and get tracked to a fix. A regression can still be merged and shipped; it's only caught afterwards.
+*Checks:*
+- `ARCH.PERF.L4.c1` · `continuous` — performance of the critical operations is measured automatically against the budgets: real-user or APM percentiles for services and websites, or scheduled benchmarks for CLIs and libraries.
+- `ARCH.PERF.L4.c2` · `manual` — each budget breach in the last 6 months has a tracked issue, and those issues get resolved.
+
+*→ To reach Level 5:* Enforce at least one budget in CI so a regression fails the build before it ships, choosing a metric that can be measured reliably there (e.g. bundle size, benchmark comparison, Lighthouse score or query count).
+
+**Level 5**
+Performance regressions are caught before they ship. A budget check blocks merges that break it, production measurement confirms the budgets hold for real users, and performance trends are visible across releases.
+*Checks:*
+- `ARCH.PERF.L5.c1` · `continuous` — a performance budget is a blocking CI check (e.g. Lighthouse CI, size-limit, a benchmark compared against the main branch, or equivalent).
+- `ARCH.PERF.L5.c2` · `continuous` — performance of the critical operations is tracked across releases, so a regression can be traced to the change that caused it.
+
+*→ Maintaining Level 5:* revisit the budgets as the app and its users change. A budget set for last year's devices or data volumes stops protecting anyone.
 
 ### Resilience / fault tolerance (`ARCH.RES`)
 
@@ -459,41 +580,47 @@ The app degrades gracefully under failure of any significant dependency, and mos
 
 > **Note on measurability:** this sub-category is the hardest to score objectively — there's no single metric that captures "tech debt." The checks below give partial signals at best; placing an app on this ladder will likely stay mostly judgment-based for a while, possibly aided by purpose-built tooling later.
 
+Also covers documentation and onboarding: whether someone new to the code — or the maintainer, months later — can understand it and change it safely.
+
 **Level 1**
 The codebase is difficult and risky to change — little to no structure or documentation, changes routinely have unexpected side effects, and nobody is confident making changes without extensive manual verification.
-*→ To reach Level 2:* Start documenting the riskiest or most-touched areas (even a short comment or doc explaining "why," not "what"), so the most dangerous parts of the code are at least known.
+*→ To reach Level 2:* Write a README that says what the app does and how to build it and run its tests, and start documenting the riskiest or most-touched areas (even a short comment or doc explaining "why," not "what"), so the most dangerous parts of the code are at least known.
 
 **Level 2**
-The riskiest areas are identified and loosely documented, but the codebase as a whole remains hard to change confidently — naming, structure, and typing are inconsistent, and changes still require careful manual care.
+A README covers the basics and the riskiest areas are identified and loosely documented, but there's no overview of how the pieces fit together, and the codebase as a whole remains hard to change confidently — naming, structure, and typing are inconsistent, and changes still require careful manual care.
 *Checks:*
 - `ARCH.DEBT.L2.c1` · `manual` — the riskiest or most-touched areas are identified and documented.
+- `ARCH.DEBT.L2.c2` · `manual` — a README says what the app does and how to build it and run its tests.
 
-*→ To reach Level 3:* Introduce consistent conventions going forward — enforced by a linter and formatter in CI — run a static-analysis scan to find hotspots, and start a list of known debt.
+*→ To reach Level 3:* Introduce consistent conventions going forward — enforced by a linter and formatter in CI — run a static-analysis scan to find hotspots, start a list of known debt, and write a short architecture overview.
 
 **Level 3**
-The codebase follows consistent conventions, enforced automatically, and has reasonable structure; most changes can be made with a normal, non-heroic amount of care. Known areas of debt are tracked, even informally, not just discovered by surprise — but paying them down is opportunistic.
+The codebase follows consistent conventions, enforced automatically, and has reasonable structure; most changes can be made with a normal, non-heroic amount of care. An architecture overview shows how the pieces fit together, and known areas of debt are tracked, even informally, not just discovered by surprise — but paying them down is opportunistic, and the reasons behind past design decisions are mostly lost.
 *Checks:*
 - `ARCH.DEBT.L3.c1` · `continuous` — a linter and formatter check run in CI as required checks.
 - `ARCH.DEBT.L3.c2` · `periodic ≤12mo` — a static-analysis/complexity scan has been run.
 - `ARCH.DEBT.L3.c3` · `manual` — known debt hotspots are tracked somewhere (even an informal backlog list).
+- `ARCH.DEBT.L3.c4` · `manual` — an architecture overview describes the main components, how they connect, and where to start reading.
 
-*→ To reach Level 4:* Budget time to actually pay debt down rather than only tracking it, run static analysis regularly, and lean on type safety and tests to make refactors safe rather than nerve-wracking.
+*→ To reach Level 4:* Budget time to actually pay debt down rather than only tracking it, run static analysis regularly, lean on type safety and tests to make refactors safe rather than nerve-wracking, and start recording significant design decisions as you make them.
 
 **Level 4**
-Tech debt is actively paid down, not just tracked. Type safety and/or test coverage make most refactors safe to attempt without fear, and dependency staleness is watched. The codebase is generally pleasant to work in, with occasional known rough edges.
+Tech debt is actively paid down, not just tracked. Type safety and/or test coverage make most refactors safe to attempt without fear, and dependency staleness is watched. Significant design decisions are recorded with their reasons. The codebase is generally pleasant to work in, with occasional known rough edges, but nobody has checked whether the docs alone are enough to get someone productive.
 *Checks:*
 - `ARCH.DEBT.L4.c1` · `continuous` — a type-checker runs in CI as a required check (where the language supports one).
 - `ARCH.DEBT.L4.c2` · `continuous` — static analysis runs automatically, on a schedule or in CI (blocking not required).
 - `ARCH.DEBT.L4.c3` · `manual` — tracked debt items are being closed over time, not only added.
 - `ARCH.DEBT.L4.c4` · `continuous` — dependency staleness (outdated major versions) is monitored.
+- `ARCH.DEBT.L4.c5` · `manual` — significant design decisions are recorded with their context and reasons (e.g. architecture decision records or equivalent).
 
-*→ To reach Level 5:* Measure maintainability over time so regression is visible, and make debt paydown a routine, budgeted part of every cycle rather than something done when time allows.
+*→ To reach Level 5:* Measure maintainability over time so regression is visible, and make debt paydown a routine, budgeted part of every cycle rather than something done when time allows, and test the docs by onboarding from them alone.
 
 **Level 5**
-Maintainability is actively protected as a first-class concern — its trend is measured, refactoring is routine and low-risk, and debt doesn't silently accumulate because paydown is a standing commitment, not a periodic push.
+Maintainability is actively protected as a first-class concern — its trend is measured, refactoring is routine and low-risk, and debt doesn't silently accumulate because paydown is a standing commitment, not a periodic push. The docs are proven to get someone from a fresh clone to a working change.
 *Checks:*
 - `ARCH.DEBT.L5.c1` · `continuous` — a maintainability trend from static analysis is tracked over time and visible to everyone who works on the code.
 - `ARCH.DEBT.L5.c2` · `manual` — debt paydown is a recurring, budgeted activity (e.g. a fixed share of each cycle).
+- `ARCH.DEBT.L5.c3` · `periodic ≤12mo` — someone has gone from a fresh clone to a small working change using only the docs, and the gaps they hit were fixed. A newcomer is ideal; a solo maintainer can do it themselves on a clean machine, without relying on memory.
 
 *→ Maintaining Level 5:* keep watching for quiet regression — maintainability erodes gradually, and this sub-category is the easiest one to silently slip backward on.
 
