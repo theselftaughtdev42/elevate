@@ -252,7 +252,7 @@ Structured logs, metrics, and distributed tracing are centralized and correlated
 
 ### Incident response (`OPS.INC`)
 
-Covers how people detect, respond to, and learn from **operational** failures. How the system itself behaves under failure (automated recovery, fault injection) belongs to [Resilience](#resilience--fault-tolerance-archres). Recovering lost data, including restore drills, belongs to [Backup & DR](#backup--dr-opsdr). Security incidents belong to the Security dimension.
+Covers how people detect, respond to, and learn from **operational** failures. How the system itself behaves under failure (automated recovery, fault injection) belongs to [Resilience](#resilience--fault-tolerance-archres). Recovering lost data, including restore drills, belongs to [Backup & DR](#backup--dr-opsdr). Security incidents belong to [Security detection & response](#security-detection--response-secdetect).
 
 **Level 1**
 No defined process for handling failures. When something breaks, whoever notices improvises a fix, with no record of what happened or why, and no one is clearly responsible.
@@ -632,6 +632,8 @@ Maintainability is actively protected as a first-class concern — its trend is 
 
 *Applies when:* the app has user accounts or protected actions.
 
+Covers how the app verifies its users and controls what each one can do. Access to the infrastructure the app runs on belongs to [Infra & cloud security](#infra--cloud-security-secinfra).
+
 **Level 1**
 No real authentication — shared credentials, no login system, or auth that's trivially bypassable (e.g. checks enforced only client-side).
 *→ To reach Level 2:* Implement real server-side authentication, even a basic username/password or managed auth provider, so identity is actually verified.
@@ -666,6 +668,90 @@ Least-privilege, fine-grained authorization is enforced everywhere, MFA is requi
 - `SEC.AUTH.L5.c3` · `continuous` — MFA is enforced (not just available) for sensitive actions.
 
 *→ Maintaining Level 5:* re-audit authorization logic whenever new resource types or roles are added — this is where gaps quietly reappear.
+
+### Application security (`SEC.APPSEC`)
+
+Covers flaws in the app's own code that an attacker can exploit: injection, cross-site scripting, unsafe deserialization and the rest of the OWASP Top 10, plus how they're found before an attacker finds them. Who may do what belongs to [AuthN / AuthZ](#authn--authz-secauth); transport encryption and HSTS belong to [Data protection](#data-protection-secdata); flaws in third-party code belong to [Dependency & supply chain](#dependency--supply-chain-secdeps).
+
+**Level 1**
+Input is trusted. Queries and shell commands are built by concatenating strings, user content is rendered without encoding, and nobody has looked at the app the way an attacker would.
+*→ To reach Level 2:* Parameterise every database query and shell command, and validate untrusted input where it enters the app.
+
+**Level 2**
+The common injection paths are closed: queries are parameterised, untrusted input is validated at the boundary, and output is encoded by the framework. Whether that's true everywhere depends on each change being written carefully, because nothing checks the code automatically.
+*Checks:*
+- `SEC.APPSEC.L2.c1` · `manual` — database queries and shell commands are built with parameters or argument lists, never by concatenating untrusted input into a string.
+- `SEC.APPSEC.L2.c2` · `manual` — untrusted input (request bodies, query strings, headers, file uploads, CLI arguments, messages) is validated against an expected shape where it enters the app.
+
+*→ To reach Level 3:* Run static application security testing (SAST) on every change, and set security headers on every response where the app serves web pages.
+
+**Level 3**
+A SAST tool scans every change for insecure patterns, and browsers get security headers that limit the damage of a cross-site scripting or clickjacking flaw. Nobody has mapped where the app's trust boundaries are, and nothing tests the running app the way an attacker would.
+*Checks:*
+- `SEC.APPSEC.L3.c1` · `continuous` — SAST (e.g. Semgrep, CodeQL, Bandit or equivalent) runs on every push/PR.
+- `SEC.APPSEC.L3.c2` · `continuous` — where the app serves web pages, an automated check (a test, or a header scanner in CI) confirms responses set a Content Security Policy, `X-Content-Type-Options: nosniff`, a frame-ancestors or `X-Frame-Options` restriction, and a `Referrer-Policy`.
+
+*→ To reach Level 4:* Write a threat model of the app's trust boundaries, make high-severity SAST findings block merge, and scan the running app with dynamic application security testing (DAST).
+
+**Level 4**
+The app's threats are written down, and the mitigations they call for are tracked. High-severity SAST findings can't be merged, and a DAST scan probes the deployed app for flaws that only show up at runtime. Nobody independent has tried to break in, and a vulnerability that's been fixed once can quietly come back.
+*Checks:*
+- `SEC.APPSEC.L4.c1` · `periodic ≤12mo` — a threat model (e.g. STRIDE, or a data-flow diagram annotated with threats) covers the app's trust boundaries, and the mitigations it calls for are implemented or tracked as issues.
+- `SEC.APPSEC.L4.c2` · `continuous` — high- and critical-severity SAST findings block merge unless explicitly dismissed with a recorded reason.
+- `SEC.APPSEC.L4.c3` · `continuous` — where the app exposes a network interface, a DAST scan (e.g. an OWASP ZAP baseline scan, Nuclei or equivalent) runs automatically against a deployed non-production environment on every deploy to it.
+
+*→ To reach Level 5:* Have the app penetration-tested, and add a regression test for every vulnerability found so it can't come back.
+
+**Level 5**
+Security is tested from the outside, not only checked from the inside. A penetration test probes the app regularly, and every vulnerability ever found has a test that would catch it returning. The threat model is kept current as the app changes.
+*Checks:*
+- `SEC.APPSEC.L5.c1` · `periodic ≤12mo` — a penetration test of the app has been run and its findings fixed or tracked as issues. On a team, the tester is someone who didn't build the app (a paid tester, a bug-bounty programme or equivalent). A solo maintainer can instead run a structured test against a published methodology (e.g. the OWASP Web Security Testing Guide, OWASP MASTG or equivalent), done by hand or by an AI pen-testing agent, with the results recorded.
+- `SEC.APPSEC.L5.c2` · `continuous` — every vulnerability found in the app's own code (by any route: SAST, DAST, pen test or external report) has an automated regression test that runs in CI.
+
+*→ Maintaining Level 5:* update the threat model when a new trust boundary appears — a new integration, upload feature or public endpoint. Pen tests scoped to last year's app miss this year's attack surface.
+
+### Infra & cloud security (`SEC.INFRA`)
+
+*Applies when:* the app is deployed to infrastructure its maintainers configure, not only distributed as a package or binary.
+
+Covers who and what can change the infrastructure the app runs on (people, services and the CI pipeline), and what the infrastructure exposes to the network. The app's own users belong to [AuthN / AuthZ](#authn--authz-secauth); the credentials themselves belong to [Secrets management](#secrets-management-secsecrets).
+
+**Level 1**
+Everyone uses the same account, often the root or owner login, and the CI pipeline deploys with a long-lived admin key. Databases and admin panels are reachable from the internet because that was the easiest way to connect to them.
+*→ To reach Level 2:* Give each person their own account, stop using the root account day to day and protect it with MFA, and take databases and admin interfaces off the public internet.
+
+**Level 2**
+Each person has their own login and the root account is locked away. Databases and admin interfaces aren't publicly reachable. Services and the CI pipeline still run with broad, admin-like permissions, and MFA is up to each person.
+*Checks:*
+- `SEC.INFRA.L2.c1` · `manual` — every person with infrastructure access uses their own named account; the root or owner account has MFA and isn't used for day-to-day work.
+- `SEC.INFRA.L2.c2` · `manual` — databases, caches and admin interfaces aren't reachable from the public internet.
+
+*→ To reach Level 3:* Require MFA for every human account, give each service and the CI pipeline its own identity with only the permissions it needs, and deny inbound network traffic by default.
+
+**Level 3**
+MFA is required for all human access. Each service and the CI pipeline has its own identity, scoped to what it needs instead of admin, and the network allows only the traffic the app needs. Permissions are set once and never revisited, and nothing checks the infrastructure's configuration for security mistakes.
+*Checks:*
+- `SEC.INFRA.L3.c1` · `continuous` — MFA is enforced for every human account with infrastructure access (by an organisation-level policy, not individual choice).
+- `SEC.INFRA.L3.c2` · `manual` — each service and the CI pipeline runs under its own identity (not a person's credentials), with permissions scoped to the resources and actions it needs, with no admin, owner or wildcard grants.
+- `SEC.INFRA.L3.c3` · `manual` — inbound network access is deny-by-default: only intended ports are exposed publicly, and services talk to each other over private networking.
+
+*→ To reach Level 4:* Scan infrastructure definitions for security misconfigurations in CI, and regularly review access to remove unused accounts, keys and permissions.
+
+**Level 4**
+Misconfigurations like a public storage bucket or an open security group are caught in CI before they're applied, and access reviews remove permissions that are no longer used. Humans still hold standing admin access to production, and a misconfiguration made outside the pipeline isn't noticed.
+*Checks:*
+- `SEC.INFRA.L4.c1` · `continuous` — an IaC security scanner (e.g. Checkov, Trivy config, KICS or equivalent) runs in CI and blocks high-severity misconfigurations.
+- `SEC.INFRA.L4.c2` · `periodic ≤6mo` — an access review has removed unused accounts, keys and permissions (e.g. using the provider's last-used data), and the result is recorded.
+
+*→ To reach Level 5:* Remove standing human admin access to production in favour of just-in-time elevation, and monitor the live infrastructure continuously against a security benchmark.
+
+**Level 5**
+Nobody holds admin access to production by default. Elevation is requested when needed, expires on its own and leaves a log. The live infrastructure is checked continuously against a security benchmark, so a misconfiguration is caught even when it bypassed the pipeline.
+*Checks:*
+- `SEC.INFRA.L5.c1` · `manual` — no human has standing admin access to production; elevated access is just-in-time, time-limited and logged (e.g. assuming a role with MFA, a privileged-access tool or equivalent). Self-approved elevation counts for a solo maintainer, as long as it's time-limited and logged.
+- `SEC.INFRA.L5.c2` · `continuous` — cloud security posture monitoring (e.g. AWS Security Hub, Google Security Command Center, scheduled Prowler runs or equivalent) checks live infrastructure against a benchmark such as CIS and alerts on new findings.
+
+*→ Maintaining Level 5:* scope every new service identity tightly from the start. Permissions widened "temporarily" to get something working are rarely narrowed again.
 
 ### Secrets management (`SEC.SECRETS`)
 
@@ -705,42 +791,48 @@ Secrets are short-lived and dynamically issued wherever the platform supports it
 
 *→ Maintaining Level 5:* re-audit as new integrations are added — each new third-party service is a chance to regress to a static long-lived key.
 
-### Dependency & vulnerability management (`SEC.DEPS`)
+### Dependency & supply chain (`SEC.DEPS`)
+
+Covers the third-party code the app is built from and the path from source to release: known vulnerabilities in dependencies, how dependencies and CI components are pinned, and whether a released artifact can be traced back to the source that produced it. Flaws in the app's own code belong to [Application security](#application-security-secappsec).
 
 **Level 1**
-No visibility into dependency vulnerabilities — dependencies are added and rarely if ever updated; you'd only find out about a known CVE in something you use by accident.
-*→ To reach Level 2:* Run a dependency audit tool manually at least occasionally (e.g. an `audit` command for your package manager) so known vulnerabilities are at least visible.
+No visibility into dependency vulnerabilities — dependencies are added and rarely if ever updated, and versions float, so two builds of the same commit can pull different code. You'd only find out about a known CVE in something you use by accident.
+*→ To reach Level 2:* Commit a lockfile so builds are reproducible, and run a dependency audit tool at least occasionally (e.g. an `audit` command for your package manager) so known vulnerabilities are visible.
 
 **Level 2**
-You check for known vulnerabilities manually, but there's no regular cadence — checks happen sporadically, and there's no process for acting on what's found.
+Dependency versions are locked, and you check for known vulnerabilities manually, but there's no regular cadence — checks happen sporadically, and there's no process for acting on what's found. CI pulls third-party actions and base images by mutable tags.
 *Checks:*
 - `SEC.DEPS.L2.c1` · `periodic ≤12mo` — a dependency audit (e.g. `npm audit`, `pip-audit` or equivalent) has been run against the project.
+- `SEC.DEPS.L2.c2` · `continuous` — a lockfile is committed, and builds install from it in a mode that fails if it's out of date (e.g. `npm ci`, `uv sync --locked` or equivalent).
 
-*→ To reach Level 3:* Automate vulnerability scanning so every change is checked for known CVEs above a severity threshold, and visibility doesn't depend on remembering to check.
+*→ To reach Level 3:* Automate vulnerability scanning so every change is checked for known CVEs, and pin third-party CI actions and base images to immutable references.
 
 **Level 3**
-Automated dependency/vulnerability scanning surfaces known CVEs on every change. There's no defined SLA for acting on findings — critical vulnerabilities might sit unpatched for a while after being flagged.
+Automated dependency/vulnerability scanning surfaces known CVEs on every change, and the build pipeline's own third-party components are pinned, so a compromised tag can't change what runs. There's no defined SLA for acting on findings — critical vulnerabilities might sit unpatched for a while after being flagged.
 *Checks:*
 - `SEC.DEPS.L3.c1` · `continuous` — automated vulnerability scanning (e.g. Dependabot alerts, Snyk, OSV-Scanner or equivalent) checks dependencies on every change.
+- `SEC.DEPS.L3.c2` · `continuous` — third-party CI actions and plugins are pinned to a full commit SHA, and container base images to a digest, enforced by a CI check or linter (e.g. zizmor, pinact, Renovate's pinning presets or equivalent).
 
-*→ To reach Level 4:* Define and follow a patch SLA by severity (e.g. critical within days, not months), and automate dependency update PRs (e.g. Dependabot/Renovate) so patching isn't fully manual.
+*→ To reach Level 4:* Define and follow a patch SLA by severity (e.g. critical within days, not months), automate dependency update PRs (e.g. Dependabot/Renovate) so patching isn't fully manual, and give CI jobs only the permissions they need.
 
 **Level 4**
-Automated scanning plus a followed patch SLA by severity; dependency updates are at least partly automated via bot-created PRs, reducing the lag between a CVE being known and being fixed.
+Automated scanning plus a followed patch SLA by severity; dependency updates, including pinned CI actions and images, are at least partly automated via bot-created PRs, reducing the lag between a CVE being known and being fixed. CI jobs can't do more than their task needs. Nothing proves that a released artifact was built from the reviewed source, and there's no record of exactly what went into it.
 *Checks:*
 - `SEC.DEPS.L4.c1` · `manual` — a patch SLA by severity is documented and being met.
-- `SEC.DEPS.L4.c2` · `continuous` — automated dependency-update PRs (e.g. Dependabot/Renovate or equivalent) are enabled.
+- `SEC.DEPS.L4.c2` · `continuous` — automated dependency-update PRs (e.g. Dependabot/Renovate or equivalent) are enabled, covering pinned CI actions and base images as well as application dependencies.
+- `SEC.DEPS.L4.c3` · `continuous` — CI job tokens default to read-only, and write permissions are granted per job only where needed.
 
-*→ To reach Level 5:* Trust the update pipeline enough to merge low-risk updates with minimal manual gatekeeping, and extend scanning beyond direct dependencies to transitive ones and to runtime/container images if applicable.
+*→ To reach Level 5:* Trust the update pipeline enough to merge low-risk updates with minimal manual gatekeeping, extend scanning to transitive dependencies and runtime/container images, and make every release carry an SBOM and signed build provenance.
 
 **Level 5**
-Vulnerability management is close to continuous — scanning covers direct and transitive dependencies (and container/runtime images where relevant), patch SLAs are consistently met, and low-risk updates merge with minimal manual friction.
+Vulnerability management is close to continuous — scanning covers direct and transitive dependencies (and container/runtime images where relevant), patch SLAs are consistently met, and low-risk updates merge with minimal manual friction. Every release says exactly what's in it and can be verified as built by CI from a specific commit.
 *Checks:*
 - `SEC.DEPS.L5.c1` · `continuous` — scanning covers transitive dependencies and container/runtime images (e.g. Trivy/Grype or equivalent).
 - `SEC.DEPS.L5.c2` · `continuous` — an SBOM is generated for each build.
 - `SEC.DEPS.L5.c3` · `continuous` — low-risk automated update PRs merge automatically once checks pass.
+- `SEC.DEPS.L5.c4` · `continuous` — release artifacts are signed and carry build provenance generated by CI (e.g. Sigstore/cosign, GitHub artifact attestations, npm or PyPI trusted publishing with provenance, or equivalent).
 
-*→ Maintaining Level 5:* keep scanning coverage current as new dependency types are introduced — new package ecosystems, new base images, and so on.
+*→ Maintaining Level 5:* keep scanning, pinning and signing current as new dependency types are introduced — new package ecosystems, new base images, new release channels.
 
 ### Data protection (`SEC.DATA`)
 
@@ -779,3 +871,44 @@ Data protection is systematic and auditable — a maintained inventory of what s
 - `SEC.DATA.L5.c2` · `continuous` — retention/deletion is enforced by an automated job, not just a written policy.
 
 *→ Maintaining Level 5:* re-audit the data inventory whenever new data types or integrations are added — new fields quietly become undocumented PII surface area otherwise.
+
+### Security detection & response (`SEC.DETECT`)
+
+Covers how an attack or breach gets noticed, how it's handled, and how outsiders can report a vulnerability. Operational incidents (outages, degradation) belong to [Incident response](#incident-response-opsinc); finding flaws before they're exploited belongs to [Application security](#application-security-secappsec).
+
+**Level 1**
+Nobody would know if the app were breached. Security-relevant actions leave no trace, there's no way for a researcher to report a vulnerability privately, and a breach would be handled by improvising.
+*→ To reach Level 2:* Publish a way to report vulnerabilities privately, log security-relevant events in the app, and turn on your infrastructure provider's audit log.
+
+**Level 2**
+Someone who finds a vulnerability knows where to report it, and security-relevant actions leave a record. The logs are only read after something has gone wrong, can be altered by whoever compromised the app, and there's no plan for what to do when a breach is confirmed.
+*Checks:*
+- `SEC.DETECT.L2.c1` · `manual` — a private vulnerability-reporting route is published: a `security.txt` at `/.well-known/security.txt` for web apps, or a `SECURITY.md` or the repository host's private vulnerability reporting for code and packages.
+- `SEC.DETECT.L2.c2` · `continuous` — where the app has user accounts or protected actions, security-relevant events (sign-ins, failed sign-ins, permission changes, admin actions, data exports) are logged with who, what and when.
+- `SEC.DETECT.L2.c3` · `continuous` — where the app runs on infrastructure its maintainers configure, the provider's audit log (e.g. AWS CloudTrail, Google Cloud Audit Logs, the hosting platform's activity log or equivalent) is enabled.
+
+*→ To reach Level 3:* Write a breach response plan, and store audit logs where the app's own credentials can't change or delete them.
+
+**Level 3**
+A written plan says what to do when a breach is confirmed, and audit logs survive a compromise of the app because they're stored out of its reach. Nobody is alerted to suspicious activity as it happens; it's found when someone goes looking, if at all.
+*Checks:*
+- `SEC.DETECT.L3.c1` · `manual` — a breach response plan covers containment, credential rotation, evidence preservation, and notifying users and regulators within any legal deadline that applies (e.g. 72 hours under GDPR).
+- `SEC.DETECT.L3.c2` · `manual` — audit logs are kept for a defined retention period in storage that the app's own credentials can't modify or delete (e.g. a separate account, an append-only or object-locked bucket, or equivalent).
+
+*→ To reach Level 4:* Alert on suspicious activity, and rehearse the breach response plan.
+
+**Level 4**
+Suspicious activity raises an alert while it's happening, and the breach response plan has been rehearsed, so a real breach isn't the first time anyone reads it. Responding is still manual, and nobody has checked that the alerts would actually fire during an attack.
+*Checks:*
+- `SEC.DETECT.L4.c1` · `continuous` — alerts fire on suspicious activity (e.g. bursts of failed sign-ins, privilege changes, root-account use, unusual data exports) and reach someone who will act on them.
+- `SEC.DETECT.L4.c2` · `periodic ≤12mo` — a breach response exercise (a solo tabletop run counts) has walked through the plan, and its outcome and any plan changes are recorded.
+
+*→ To reach Level 5:* Contain the most common attacks automatically, and test that the detection rules fire by simulating the activity they're meant to catch.
+
+**Level 5**
+Detection is proven and the first response is automatic: common attacks like credential stuffing or a leaked key are contained without waiting for a human, and simulated attacks confirm the alerts fire.
+*Checks:*
+- `SEC.DETECT.L5.c1` · `continuous` — automated responses contain the most common detected attacks (e.g. locking accounts or rate-limiting after repeated failed sign-ins, revoking sessions, disabling a leaked key).
+- `SEC.DETECT.L5.c2` · `periodic ≤6mo` — each alerting rule has been tested by simulating the activity it detects, and the rules that didn't fire have been fixed.
+
+*→ Maintaining Level 5:* add detection for each new sensitive action or integration as it's built. Attackers go where the logging isn't.
