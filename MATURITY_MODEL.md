@@ -35,6 +35,7 @@ This is the **master model**. Smaller app-type models (e.g. CLI tool, static web
   - `manual` — needs a person's judgement, or confirms that a document or practice exists.
 - **Automation is a requirement only where it's the practice itself** — e.g. "secret scanning runs on every push" at Secrets L4. There's no blanket rule that high levels must be automated; the goal is that wherever a check *can* be continually validated, it is.
 - **Checks name the signal, not the tool.** Example tools are given with "or equivalent"; any tool that produces the same signal counts.
+- **Every check is achievable by a solo maintainer.** Where a practice normally needs a second person (code review, an on-call rotation), the check also names a solo equivalent that serves the same purpose. Meeting the solo equivalent satisfies the check in full; it isn't a lesser pass, and an app shouldn't be marked N/A just because it has one maintainer.
 - **Platform defaults count only when consciously verified.** A capability a hosting platform provides out of the box (autoscaling, encryption at rest, TLS) meets a check only if someone has confirmed it's configured as needed — not if it's merely assumed.
 
 ### Assessment
@@ -102,22 +103,22 @@ The default branch is protected from destructive operations, and changes usually
 - `OPS.CHANGE.L2.c1` · `continuous` — the default branch is protected against force-pushes and deletion.
 - `OPS.CHANGE.L2.c2` · `manual` — recent changes to the default branch arrived through pull requests (or equivalent), not direct pushes.
 
-*→ To reach Level 3:* Make pull requests mandatory, with at least one approving review and passing CI required before merge.
+*→ To reach Level 3:* Make pull requests mandatory, with a required review and passing CI before merge. On a team, the review comes from another person. A solo maintainer makes an automated review a required, blocking check instead.
 
 **Level 3**
-Every change to the default branch goes through a pull request that needs an approving review and passing required checks. Admins can still bypass the rules, an approval survives later pushes to the same PR, and sensitive areas get no more scrutiny than anything else.
+Every change to the default branch goes through a pull request that needs a review and passing required checks — from another person on a team, or from a required automated reviewer on a solo project. Admins can still bypass the rules, an approval survives later pushes to the same PR, and sensitive areas get no more scrutiny than anything else.
 *Checks:*
-- `OPS.CHANGE.L3.c1` · `continuous` — branch protection requires a pull request with at least one approving review from someone other than the author.
+- `OPS.CHANGE.L3.c1` · `continuous` — branch protection requires a pull request with a review before merge: an approving review from someone other than the author or, for a solo maintainer, an automated review (e.g. an AI code reviewer or equivalent) whose result is a required, blocking check. A reviewer that only leaves comments doesn't count.
 - `OPS.CHANGE.L3.c2` · `continuous` — branch protection requires CI status checks to pass before merge.
 
-*→ To reach Level 4:* Close the gaps around the gate: apply the rules to admins, dismiss approvals when new commits are pushed, and require owner review for sensitive paths (infrastructure, auth, CI config).
+*→ To reach Level 4:* Close the gaps around the gate: apply the rules to admins, dismiss approvals when new commits are pushed, and add extra required scrutiny for sensitive paths (infrastructure, auth, CI config).
 
 **Level 4**
-The review gate has no quiet way around it. Rules apply to everyone, including admins, or any bypass is deliberate and logged. Approvals are tied to the code actually being merged, and sensitive paths need review from their owners.
+The review gate has no quiet way around it. Rules apply to everyone, including admins, or any bypass is deliberate and logged. Approvals are tied to the code actually being merged, and changes to sensitive paths get extra required scrutiny.
 *Checks:*
 - `OPS.CHANGE.L4.c1` · `continuous` — branch protection applies to admins, or bypasses need an explicit, logged action.
-- `OPS.CHANGE.L4.c2` · `continuous` — approvals are dismissed when new commits are pushed to the pull request.
-- `OPS.CHANGE.L4.c3` · `continuous` — a CODEOWNERS file (or equivalent) requires owner review for sensitive paths such as infrastructure, auth and CI configuration.
+- `OPS.CHANGE.L4.c2` · `continuous` — approvals (human or automated) are dismissed or re-run when new commits are pushed to the pull request.
+- `OPS.CHANGE.L4.c3` · `continuous` — changes to sensitive paths such as infrastructure, auth and CI configuration need an extra required check: owner review through a CODEOWNERS file (or equivalent) on a team or, for a solo maintainer, a check scoped to those paths (e.g. an IaC policy scan or a focused security review) that must pass.
 
 *→ To reach Level 5:* Manage the protection settings themselves as code so they can't drift silently, and audit regularly that nothing unreviewed reached the default branch.
 
@@ -131,7 +132,7 @@ Change control is verified, not assumed. The protection rules are defined in ver
 
 ### Environments & IaC (`OPS.ENV`)
 
-*Applies when:* the app is deployed to infrastructure the team configures, not only distributed as a package or binary.
+*Applies when:* the app is deployed to infrastructure its maintainers configure, not only distributed as a package or binary.
 
 Covers whether the app's environments can be recreated, kept consistent with each other, and changed safely, including its database schema.
 
@@ -272,18 +273,18 @@ Runbooks exist for known failure modes and are actually used during incidents. A
 - `OPS.INC.L3.c1` · `manual` — runbooks exist for at least the known failure modes.
 - `OPS.INC.L3.c2` · `manual` — a post-incident writeup exists for the most recent significant incident.
 
-*→ To reach Level 4:* Track post-incident action items to completion, and define an on-call rotation with an escalation path so response doesn't depend on whoever happens to be around.
+*→ To reach Level 4:* Track post-incident action items to completion, and make sure response doesn't depend on whoever happens to be around: an on-call rotation with an escalation path on a team, or a documented plan for when the sole maintainer is unavailable.
 
 **Level 4**
-Post-incident reviews reliably produce tracked follow-up actions that get completed. On-call is a defined rotation with an escalation path, not a single person or best effort.
+Post-incident reviews reliably produce tracked follow-up actions that get completed. Who responds is defined, not best effort: a rotation with an escalation path on a team or, on a solo project, alerts that reliably reach the maintainer and a stated plan for when they can't respond.
 *Checks:*
 - `OPS.INC.L4.c1` · `manual` — post-incident action items are tracked in an issue tracker through to completion.
-- `OPS.INC.L4.c2` · `manual` — an on-call rotation and escalation path are defined.
+- `OPS.INC.L4.c2` · `manual` — an on-call rotation and escalation path are defined or, for a solo maintainer, a documented plan for when they're unavailable: a published response expectation, plus either a backup person with break-glass access or a safe default (e.g. a maintenance page or automatic rollback) that the app falls back to.
 
 *→ To reach Level 5:* Track time to restore and drive it down, and rehearse incident response through scheduled game days rather than only learning from real incidents.
 
 **Level 5**
-Incident response is measured and practiced: time to restore is tracked and trending down, and the team rehearses its response through game days so a real incident isn't the first time a runbook gets used.
+Incident response is measured and practiced: time to restore is tracked and trending down, and the response is rehearsed through game days (a solo tabletop run counts) so a real incident isn't the first time a runbook gets used.
 *Checks:*
 - `OPS.INC.L5.c1` · `manual` — time to restore is tracked per incident and trending down.
 - `OPS.INC.L5.c2` · `periodic ≤6mo` — a game day rehearsing human incident response has been run and its outcome recorded.
@@ -491,7 +492,7 @@ Tech debt is actively paid down, not just tracked. Type safety and/or test cover
 **Level 5**
 Maintainability is actively protected as a first-class concern — its trend is measured, refactoring is routine and low-risk, and debt doesn't silently accumulate because paydown is a standing commitment, not a periodic push.
 *Checks:*
-- `ARCH.DEBT.L5.c1` · `continuous` — a maintainability trend from static analysis is tracked over time and visible to the team.
+- `ARCH.DEBT.L5.c1` · `continuous` — a maintainability trend from static analysis is tracked over time and visible to everyone who works on the code.
 - `ARCH.DEBT.L5.c2` · `manual` — debt paydown is a recurring, budgeted activity (e.g. a fixed share of each cycle).
 
 *→ Maintaining Level 5:* keep watching for quiet regression — maintainability erodes gradually, and this sub-category is the easiest one to silently slip backward on.
